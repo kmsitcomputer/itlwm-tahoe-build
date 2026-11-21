@@ -444,6 +444,8 @@ struct ieee80211com {
     bool ic_wcl_join_requested;
     bool ic_wcl_scan_requested;
     bool ic_wcl_scan_active;
+    /* Restart an in-flight firmware scan when macOS replaces its request. */
+    bool ic_wcl_scan_restart;
     uint8_t ic_wcl_scan_ssid_length;
     uint8_t ic_wcl_scan_ssid[32];
     bool ic_wcl_scan_restricted;

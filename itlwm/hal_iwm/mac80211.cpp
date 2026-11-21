@@ -3082,6 +3082,17 @@ iwm_newstate_task(void *psc)
     if (ostate == IEEE80211_S_SCAN) {
         if (nstate == ostate) {
             if (sc->sc_flags & IWM_FLAG_SCANNING) {
+#ifdef AIRPORT_WCL
+                // macOS replaced its scan request mid-scan (WCL scan restart).
+                // Abort the firmware scan so the task can issue a new one with
+                // the freshly requested channel list; without this the restart
+                // request would be dropped and macOS would see no results.
+                if (ic->ic_wcl_scan_restart && that->iwm_scan_abort(sc) == 0) {
+                    ic->ic_wcl_scan_restart = false;
+                    goto next_scan;
+                }
+                ic->ic_wcl_scan_restart = false;
+#endif
                 //                    refcnt_rele_wake(&sc->task_refs);
                 splx(s);
                 return;

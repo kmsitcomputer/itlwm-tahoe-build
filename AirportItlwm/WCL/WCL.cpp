@@ -242,10 +242,24 @@ IOReturn AirportItlwmSkywalkInterface::beginWCLScan(apple80211ScanRequest *reque
     ieee80211com *ic = fHalService->get80211Controller();
     if (!(ic->ic_if.if_flags & IFF_RUNNING))
         return kIOReturnNotReady;
-    if (scanPending || joinPending || (ic->ic_flags & IEEE80211_F_BGSCAN))
+    if (joinPending || (ic->ic_flags & IEEE80211_F_BGSCAN))
         return kIOReturnBusy;
     if (ic->ic_state == IEEE80211_S_AUTH || ic->ic_state == IEEE80211_S_ASSOC)
         return kIOReturnBusy;
+    bool restart = false;
+    if (scanPending) {
+        // macOS replaced its pending scan request while the previous scan is
+        // still running. Rejecting the request made networks invisible to
+        // macOS, because it only keeps results that arrive while the request
+        // is pending. Instead, cancel the running scan and restart it with
+        // the newly requested channels. The completion notice of the cancelled
+        // scan is marked stale so it cannot complete the new scan early.
+        restart = true;
+        scanSkipCompletion = true;
+        scanPending = false;
+        ic->ic_wcl_scan_requested = false;
+        scanSource->cancelTimeout();
+    }
     if (scan.channelCount) {
         bool usable = false;
         for (unsigned channel = 1; channel <= IEEE80211_CHAN_MAX; ++channel)
@@ -275,11 +289,13 @@ IOReturn AirportItlwmSkywalkInterface::beginWCLScan(apple80211ScanRequest *reque
             scanSource->cancelTimeout();
             return kIOReturnBusy;
         }
-    } else if (ic->ic_state != IEEE80211_S_SCAN) {
+    } else if (restart || ic->ic_state != IEEE80211_S_SCAN) {
+        ic->ic_wcl_scan_restart = restart;
         int error = ic->ic_newstate(ic, IEEE80211_S_SCAN, -1);
         if (error) {
             scanPending = false;
             ic->ic_wcl_scan_requested = false;
+            ic->ic_wcl_scan_restart = false;
             scanSource->cancelTimeout();
             return kIOReturnError;
         }
@@ -295,6 +311,9 @@ void AirportItlwmSkywalkInterface::finishWCLScan(IOReturn status)
     scanCompleted = false;
     scanSource->cancelTimeout();
     fHalService->get80211Controller()->ic_wcl_scan_requested = false;
+    // Don't leave a stale channel restriction behind: a later driver-initiated
+    // scan must cover every channel, not just the ones macOS last asked for.
+    fHalService->get80211Controller()->ic_wcl_scan_restricted = false;
     instance->postMessage(this, AirportWCL::ScanDone, &status, sizeof(status), true);
 }
 
